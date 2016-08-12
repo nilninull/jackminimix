@@ -4,11 +4,11 @@
 -- created: Tue Aug 10 18:05:33 JST 2010
 
 ------------------------------------------------------------------------------
--- 
+--
 -- Module      :  Sound.JackMiniMix
 -- Copyright   :  (c) Renick Bell 2010
 -- License     :  GPL
--- 
+--
 -- Maintainer  :  renick@gmail.com
 -- Stability   :  provisional
 -- Portability :  Linux only? Does it work on OSX?
@@ -21,7 +21,7 @@
 -- JackMiniMix was written by Nicholas J Humfrey. <http://www.aelius.com/njh/jackminimix/>
 --
 -- OSC was developed at CNMAT by Adrian Freed and Matt Wright. <http://opensoundcontrol.org/>
--- 
+--
 -- The documentation was mostly taken from the source of JackMiniMix by Humfrey.
 --
 -- This module requires that the JackMiniMix program be installed.
@@ -30,22 +30,21 @@
 
 module Sound.JackMiniMix where
 
-import Sound.OpenSoundControl.Transport
-import Sound.OpenSoundControl.Transport.UDP
-import Sound.OpenSoundControl.OSC
+import           Control.Applicative
+import           Control.Monad
+import           Data.Int
+import           Data.Maybe
+import           Sound.OSC
 
+-- | Bracket JackMiniMix communication.
 
-
--- | Bracket JackMiniMix communication. 
-
-withJackMiniMix :: Int -> (UDP -> IO a) -> IO a
+withJackMiniMix :: Int -> Connection UDP a -> IO a
 withJackMiniMix port = withTransport (openUDP "127.0.0.1" port)
 
-
-channel_count :: (Transport t) => t -> IO OSC
-channel_count fd = 
+channel_count :: Connection UDP [Datum]
+channel_count =
     let m = Message "/mixer/get_channel_count" []
-    in send fd m >> wait fd "/mixer/channel_count"
+    in sendMessage m >> waitDatum "/mixer/channel_count"
 
 -- | Returns the number of stereo input channels that the mixer has.
 --
@@ -57,16 +56,20 @@ channel_count fd =
 --
 -- \/mixer\/channel_count (i)
 
-channelCount :: Int -- ^ the port number
-                -> IO OSC
-channelCount port = withJackMiniMix port (\x -> channel_count x)
+channelCount :: Int -> IO [Datum]
+channelCount port = withJackMiniMix port channel_count
+
+channelCount' :: Int -> IO (Maybe Int32)
+channelCount' port = (d_get <=< listToMaybe) <$> withJackMiniMix port channel_count
 
 
 
-get_channel_gain :: (Transport t) => t -> Int -> IO OSC
-get_channel_gain fd channel = 
-    let m = Message "/mixer/channel/get_gain" [Int channel]
-    in send fd m >> wait fd "/mixer/channel/gain"
+
+
+get_channel_gain :: (RecvOSC m, SendOSC m) => Int32 -> m [Datum]
+get_channel_gain channel =
+    let m = Message "/mixer/channel/get_gain" [Int32 channel]
+    in sendMessage m >> waitDatum "/mixer/channel/gain"
 
 -- | Returns the gain (in decibels) of channel.
 --
@@ -80,19 +83,20 @@ get_channel_gain fd channel =
 --
 -- channel is the number of the channel (in range 1 to total number of channels).
 
-getChannelGain :: Int -- ^ the port number
-               -> Int -- ^ the channel 
-               -> IO OSC
-getChannelGain port channel = 
-    let getter x = get_channel_gain x channel
-    in withJackMiniMix port getter
+getChannelGain :: Int -> Int32 -> IO [Datum]
+getChannelGain port channel =
+    withJackMiniMix port (get_channel_gain channel)
+
+getChannelGain' ::  Int -> Int32 -> IO (Maybe Int32, Maybe Float)
+getChannelGain' port channel = do
+    [ch, gain] <- withJackMiniMix port (get_channel_gain channel)
+    return (d_get ch, d_get gain)
 
 
-
-set_channel_gain :: (Transport t) => t -> Int -> Double -> IO OSC
-set_channel_gain fd channel gain = 
-    let m = Message "/mixer/channel/set_gain" [Int channel,Float gain]
-    in send fd m >> wait fd "/mixer/channel/gain"
+set_channel_gain :: (RecvOSC m, SendOSC m) => Int32 -> Float -> m [Datum]
+set_channel_gain channel gain =
+    let m = Message "/mixer/channel/set_gain" [Int32 channel,Float gain]
+    in sendMessage m >> waitDatum "/mixer/channel/gain"
 
 -- | Sets the gain of channel channel to gain dB.
 --
@@ -108,20 +112,20 @@ set_channel_gain fd channel gain =
 --
 -- gain is the gain (in decibels) to set the channel to (in range -90 to 90 dB).
 
-setChannelGain :: Int -- ^ the port number
-               -> Int -- ^ the channel number
-               -> Double -- ^ the new gain
-               -> IO OSC
-setChannelGain port channel gain = 
-    let setter x = set_channel_gain x channel gain
-    in withJackMiniMix port setter
+setChannelGain :: Int -> Int32 -> Float -> IO [Datum]
+setChannelGain port channel gain =
+    withJackMiniMix port (set_channel_gain channel gain)
+
+setChannelGain' :: Int -> Int32 -> Float -> IO (Maybe Int32, Maybe Float)
+setChannelGain' port channel gain = do
+    [ch, newGain] <- withJackMiniMix port (set_channel_gain channel gain)
+    return (d_get ch, d_get newGain)
 
 
-
-get_channel_label :: (Transport t) => t -> Int -> IO OSC
-get_channel_label fd channel = 
-    let m = Message "/mixer/channel/get_label" [Int channel]
-    in send fd m >> wait fd "/mixer/channel/label"
+get_channel_label :: (RecvOSC m, SendOSC m) => Int32 -> m [Datum]
+get_channel_label channel =
+    let m = Message "/mixer/channel/get_label" [Int32 channel]
+    in sendMessage m >> waitDatum "/mixer/channel/label"
 
 -- | Returns the label (string) of channel number channel.
 --
@@ -135,19 +139,20 @@ get_channel_label fd channel =
 --
 -- channel is the number of the channel (in range 1 to total number of channels).
 
-getChannelLabel :: Int -- ^ the port number
-                -> Int -- ^ the channel
-                -> IO OSC
+getChannelLabel :: Int -> Int32 -> IO [Datum]
 getChannelLabel port channel =
-    let getter x = get_channel_label x channel
-    in withJackMiniMix port getter
+    withJackMiniMix port (get_channel_label channel)
+
+getChannelLabel' :: Int -> Int32 -> IO (Maybe Int32, Maybe ASCII)
+getChannelLabel' port channel = do
+    [ch, label] <- withJackMiniMix port (get_channel_label channel)
+    return (d_get ch, d_get label)
 
 
-
-set_channel_label :: (Transport t) => t -> Int -> String -> IO OSC
-set_channel_label fd channel label = 
-    let m = Message "/mixer/channel/set_label" [Int channel,String label]
-    in send fd m >> wait fd "/mixer/channel/label"
+set_channel_label :: (RecvOSC m, SendOSC m) => Int32 -> ASCII -> m [Datum]
+set_channel_label channel label =
+    let m = Message "/mixer/channel/set_label" [Int32 channel, ASCII_String label]
+    in sendMessage m >> waitDatum "/mixer/channel/label"
 
 -- | Sets the label (string) of channel number channel to label.
 --
@@ -163,20 +168,20 @@ set_channel_label fd channel label =
 --
 -- label is the new label for the channel.
 
-setChannelLabel :: Int -- ^ the port number
-                -> Int -- ^ the channel
-                -> String -- ^ the new channel label
-                -> IO OSC
-setChannelLabel port channel label = 
-    let setter x = set_channel_label x channel label
-    in withJackMiniMix port setter
+setChannelLabel :: Int -> Int32 -> ASCII -> IO [Datum]
+setChannelLabel port channel label =
+  withJackMiniMix port (set_channel_label channel label)
+
+setChannelLabel' :: Int -> Int32 -> ASCII -> IO (Maybe Int32, Maybe ASCII)
+setChannelLabel' port channel label = do
+  [ch, newLabel] <- withJackMiniMix port (set_channel_label channel label)
+  return (d_get ch, d_get newLabel)
 
 
 
-ping :: (Transport t) => t -> IO OSC
-ping fd =
-    let m = Message "/ping" []
-    in send fd m >> wait fd "/pong"
+ping :: Connection UDP Message
+ping = let m = Message "/ping" []
+       in sendMessage m >> waitReply "/pong"
 
 -- | Pings the mixer to see if it is there.
 --
@@ -188,6 +193,6 @@ ping fd =
 --
 -- \/pong
 
-pingMixer :: Int -- ^ the port number
-          -> IO OSC
-pingMixer port = withJackMiniMix port (\x -> ping x)
+-- pingMixer :: Int -> IO [Datum]
+pingMixer :: Int -> IO Message
+pingMixer port = withJackMiniMix port ping
